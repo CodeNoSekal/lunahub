@@ -26,13 +26,11 @@ This repository is at the first foundation stage. Do not treat it as a finished 
 After you push these files to your GitHub repository, use the explicit install form below. The installer needs `LUNAHUB_REPO_URL` because a raw one-line installer cannot automatically see the whole repository.
 
 ```bash
-sudo LUNAHUB_REPO_URL=https://github.com/YOUR_GITHUB_USERNAME/lunahub.git \
+sudo LUNAHUB_REPO_URL=https://github.com/CodeNoSekal/lunahub.git \
   LUNAHUB_DOMAIN=lunahub.space \
   LUNAHUB_ACME_EMAIL=admin@lunahub.space \
-  bash <(curl -fsSL https://raw.githubusercontent.com/YOUR_GITHUB_USERNAME/lunahub/main/install.sh)
+  bash <(curl -fsSL https://raw.githubusercontent.com/CodeNoSekal/lunahub/main/install.sh)
 ```
-
-Replace `YOUR_GITHUB_USERNAME` before using the command.
 
 ## First commands after install
 
