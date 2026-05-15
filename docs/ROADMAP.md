@@ -1,53 +1,55 @@
 # LunaHub Roadmap
 
-## Stage 01 — Foundation
+## Step 01 — Foundation
 
-- [x] Repository skeleton
-- [x] One-command installer
+- [x] repository structure
+- [x] installer
 - [x] Xray installation
 - [x] Hysteria2 installation
-- [x] Config generation
 - [x] CLI user creation
-- [x] Subscription endpoint
-- [x] Temporary dashboard
+- [x] VLESS REALITY config generation
+- [x] Hysteria2 config generation
+- [x] subscription endpoint
+- [x] temporary web dashboard
+- [x] systemd service
 
-## Stage 02 — Real web panel
+## Step 02 — Basic admin panel
 
-- [ ] Admin login
-- [ ] User list page
-- [ ] Create user page
-- [ ] Disable/enable user actions
-- [ ] Show subscription QR
-- [ ] Settings page
+- [ ] real login page
+- [ ] create user from web UI
+- [ ] disable/enable user from web UI
+- [ ] show subscription and QR code
+- [ ] hide credentials by default
+- [ ] audit log
 
-## Stage 03 — Telegram bot
+## Step 03 — Telegram bot
 
-- [ ] Bot token settings
-- [ ] /start
-- [ ] Invite code registration
-- [ ] /sub command
-- [ ] Admin notifications
+- [ ] bot token setting
+- [ ] `/start`
+- [ ] invite code registration
+- [ ] `/sub`
+- [ ] `/status`
+- [ ] admin alerts
 
-## Stage 04 — Email
+## Step 04 — Email
 
 - [ ] SMTP settings
-- [ ] Test email
-- [ ] Send subscription email
-- [ ] Alert email templates
+- [ ] test email
+- [ ] subscription email template
+- [ ] admin alert template
 
-## Stage 05 — Monitoring and updates
+## Step 05 — Monitoring and backups
 
-- [ ] Traffic usage
-- [ ] Service health alerts
-- [ ] Disk/CPU/RAM metrics
-- [ ] Update checker
-- [ ] Backup/restore
+- [ ] service health checks
+- [ ] CPU/RAM/disk checks
+- [ ] traffic accounting
+- [ ] scheduled backups
+- [ ] restore command
 
-## Stage 06 — Hardening
+## Step 06 — Updates
 
-- [ ] Non-root web service
-- [ ] Privileged local agent
-- [ ] Token hashing
-- [ ] Secret encryption
-- [ ] Audit log
-- [ ] Rate limiting
+- [ ] check LunaHub release
+- [ ] check Xray version
+- [ ] check Hysteria2 version
+- [ ] pre-update backup
+- [ ] rollback

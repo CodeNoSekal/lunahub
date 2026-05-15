@@ -2,42 +2,45 @@
 
 LunaHub is a personal self-hosted panel/installer for Ubuntu 24.04.
 
-Initial goal:
+Current Step 01 goal:
 
 - install and manage Xray-core for VLESS + REALITY + Vision;
 - install and manage Hysteria2;
-- create users;
+- create users from CLI;
 - generate subscription links;
-- keep configs reproducible from one local database;
-- run as a systemd service;
-- provide CLI commands for recovery and debugging.
+- keep configs reproducible from one local JSON database;
+- run a temporary web/API service through systemd;
+- provide recovery/debug commands.
 
-This repository is at the first foundation stage. Do not treat it as a finished commercial panel yet.
+This is the foundation stage. Do not treat it as a finished commercial panel yet.
 
 ## Default ports
 
 - `443/tcp` — VLESS + REALITY + Vision via Xray
 - `443/udp` — Hysteria2
 - `80/tcp` — ACME HTTP challenge for Hysteria2 certificates
-- `9443/tcp` — LunaHub web/API service, HTTP at this stage
+- `9443/tcp` — temporary LunaHub web/API service, HTTP at this stage
 
-## Quick install from GitHub
+## Install from public GitHub repository
 
-After you push these files to your GitHub repository, use the explicit install form below. The installer needs `LUNAHUB_REPO_URL` because a raw one-line installer cannot automatically see the whole repository.
+Use the safer two-step form. It avoids `/dev/fd` and makes errors easier to read.
 
 ```bash
-sudo LUNAHUB_REPO_URL=https://github.com/YOUR_GITHUB_USERNAME/lunahub.git \
+curl -fsSL https://raw.githubusercontent.com/CodeNoSekal/lunahub/main/install.sh -o /tmp/lunahub-install.sh
+sudo env \
+  LUNAHUB_REPO_URL=https://github.com/CodeNoSekal/lunahub.git \
   LUNAHUB_DOMAIN=lunahub.space \
   LUNAHUB_ACME_EMAIL=admin@lunahub.space \
-  bash <(curl -fsSL https://raw.githubusercontent.com/YOUR_GITHUB_USERNAME/lunahub/main/install.sh)
+  bash /tmp/lunahub-install.sh
 ```
 
-Replace `YOUR_GITHUB_USERNAME` before using the command.
+If you use a real mailbox for ACME notifications, replace `admin@lunahub.space` with it.
 
 ## First commands after install
 
 ```bash
 sudo lunahub doctor
+sudo lunahub status
 sudo lunahub user create --name "Test User" --email test@example.com
 sudo lunahub apply
 sudo lunahub user list
@@ -46,4 +49,9 @@ sudo lunahub sub show --email test@example.com
 
 ## Important warning
 
-Keys and subscription links are credentials. Never publish generated files from `/etc/lunahub`, `/var/lib/lunahub`, `/usr/local/etc/xray/config.json`, or `/etc/hysteria/config.yaml`.
+Keys and subscription links are credentials. Never publish generated files from:
+
+- `/etc/lunahub/config.json`
+- `/var/lib/lunahub/db.json`
+- `/usr/local/etc/xray/config.json`
+- `/etc/hysteria/config.yaml`

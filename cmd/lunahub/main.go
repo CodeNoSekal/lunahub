@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -22,8 +23,6 @@ import (
 
 const defaultConfigPath = "/etc/lunahub/config.json"
 
-// Config is intentionally JSON-only at the first stage so the project can be built
-// with the Go standard library and no external dependencies.
 type Config struct {
 	Domain      string `json:"domain"`
 	ACMEEmail   string `json:"acme_email"`
@@ -73,8 +72,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	cmd := os.Args[1]
-	switch cmd {
+	switch os.Args[1] {
 	case "init-db":
 		must(runInitDB())
 	case "doctor":
@@ -92,14 +90,14 @@ func main() {
 	case "help", "--help", "-h":
 		usage()
 	default:
-		fmt.Fprintf(os.Stderr, "unknown command: %s\n\n", cmd)
+		fmt.Fprintf(os.Stderr, "unknown command: %s\n\n", os.Args[1])
 		usage()
 		os.Exit(1)
 	}
 }
 
 func usage() {
-	fmt.Println(`LunaHub CLI
+	fmt.Print(`LunaHub CLI
 
 Commands:
   lunahub init-db
@@ -138,6 +136,9 @@ func loadConfig() (Config, error) {
 	if err := json.Unmarshal(b, &cfg); err != nil {
 		return cfg, err
 	}
+	if cfg.Domain == "" {
+		return cfg, errors.New("config domain is empty")
+	}
 	if cfg.Paths.DataFile == "" {
 		return cfg, errors.New("config paths.data_file is empty")
 	}
@@ -166,14 +167,14 @@ func loadStore(cfg Config) (Store, error) {
 }
 
 func saveStore(cfg Config, st Store) error {
-	if err := os.MkdirAll(filepath.Dir(cfg.Paths.DataFile), 0700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(cfg.Paths.DataFile), 0750); err != nil {
 		return err
 	}
 	b, err := json.MarshalIndent(st, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(cfg.Paths.DataFile, append(b, '\n'), 0600)
+	return os.WriteFile(cfg.Paths.DataFile, append(b, '\n'), 0660)
 }
 
 func runInitDB() error {
@@ -226,6 +227,7 @@ func createUser(name, email string) error {
 	if name == "" || email == "" {
 		return errors.New("--name and --email are required")
 	}
+
 	cfg, err := loadConfig()
 	if err != nil {
 		return err
@@ -239,6 +241,7 @@ func createUser(name, email string) error {
 			return fmt.Errorf("user already exists: %s", email)
 		}
 	}
+
 	now := time.Now().UTC()
 	u := User{
 		ID:                randomHex(16),
@@ -271,9 +274,9 @@ func listUsers() error {
 		return err
 	}
 	sort.Slice(st.Users, func(i, j int) bool { return st.Users[i].Email < st.Users[j].Email })
-	fmt.Printf("%-24s %-30s %-10s %-36s\n", "NAME", "EMAIL", "STATUS", "VLESS_UUID")
+	fmt.Printf("%-24s %-34s %-10s %-36s\n", "NAME", "EMAIL", "STATUS", "VLESS_UUID")
 	for _, u := range st.Users {
-		fmt.Printf("%-24s %-30s %-10s %-36s\n", u.Name, u.Email, u.Status, u.VLESSUUID)
+		fmt.Printf("%-24s %-34s %-10s %-36s\n", u.Name, u.Email, u.Status, u.VLESSUUID)
 	}
 	return nil
 }
@@ -373,12 +376,14 @@ func writeXrayConfig(cfg Config, st Store) error {
 		Email string `json:"email"`
 		Level int    `json:"level"`
 	}
+
 	clients := []Client{}
 	for _, u := range st.Users {
 		if u.Status == "active" {
 			clients = append(clients, Client{ID: u.VLESSUUID, Flow: "xtls-rprx-vision", Email: u.Email, Level: 0})
 		}
 	}
+
 	conf := map[string]any{
 		"log": map[string]any{
 			"loglevel": "info",
@@ -388,8 +393,18 @@ func writeXrayConfig(cfg Config, st Store) error {
 		"dns":   map[string]any{"servers": []string{"1.1.1.1", "8.8.8.8"}},
 		"stats": map[string]any{},
 		"policy": map[string]any{
-			"levels": map[string]any{"0": map[string]any{"statsUserUplink": true, "statsUserDownlink": true, "statsUserOnline": true}},
-			"system": map[string]any{"statsInboundUplink": true, "statsInboundDownlink": true, "statsOutboundUplink": true, "statsOutboundDownlink": true},
+			"levels": map[string]any{
+				"0": map[string]any{
+					"statsUserUplink":   true,
+					"statsUserDownlink": true,
+				},
+			},
+			"system": map[string]any{
+				"statsInboundUplink":    true,
+				"statsInboundDownlink":  true,
+				"statsOutboundUplink":   true,
+				"statsOutboundDownlink": true,
+			},
 		},
 		"inbounds": []any{
 			map[string]any{
@@ -413,11 +428,18 @@ func writeXrayConfig(cfg Config, st Store) error {
 						"shortIds":    []string{cfg.Xray.RealityShortID},
 					},
 				},
-				"sniffing": map[string]any{"enabled": true, "destOverride": []string{"http", "tls", "quic"}, "routeOnly": true},
+				"sniffing": map[string]any{
+					"enabled":      true,
+					"destOverride": []string{"http", "tls", "quic"},
+					"routeOnly":    true,
+				},
 			},
 		},
-		"outbounds": []any{map[string]any{"protocol": "freedom", "tag": "direct", "settings": map[string]any{}}},
+		"outbounds": []any{
+			map[string]any{"protocol": "freedom", "tag": "direct", "settings": map[string]any{}},
+		},
 	}
+
 	b, err := json.MarshalIndent(conf, "", "  ")
 	if err != nil {
 		return err
@@ -425,7 +447,18 @@ func writeXrayConfig(cfg Config, st Store) error {
 	if err := os.MkdirAll(filepath.Dir(cfg.Paths.XrayConfig), 0755); err != nil {
 		return err
 	}
-	return os.WriteFile(cfg.Paths.XrayConfig, append(b, '\n'), 0644)
+	tmp := cfg.Paths.XrayConfig + ".tmp"
+	if err := os.WriteFile(tmp, append(b, '\n'), 0644); err != nil {
+		return err
+	}
+	if err := run("xray", "run", "-test", "-config", tmp); err != nil {
+		return fmt.Errorf("xray config test failed: %w", err)
+	}
+	if _, err := os.Stat(cfg.Paths.XrayConfig); err == nil {
+		backup := cfg.Paths.XrayConfig + ".bak." + time.Now().UTC().Format("20060102-150405")
+		_ = copyFile(cfg.Paths.XrayConfig, backup)
+	}
+	return os.Rename(tmp, cfg.Paths.XrayConfig)
 }
 
 func writeHysteriaConfig(cfg Config, st Store) error {
@@ -460,8 +493,13 @@ func writeHysteriaConfig(cfg Config, st Store) error {
 	sb.WriteString("  proxy:\n")
 	sb.WriteString("    url: " + cfg.Hysteria.MasqueradeURL + "\n")
 	sb.WriteString("    rewriteHost: true\n")
+
 	if err := os.MkdirAll(filepath.Dir(cfg.Paths.HysteriaConfig), 0755); err != nil {
 		return err
+	}
+	if _, err := os.Stat(cfg.Paths.HysteriaConfig); err == nil {
+		backup := cfg.Paths.HysteriaConfig + ".bak." + time.Now().UTC().Format("20060102-150405")
+		_ = copyFile(cfg.Paths.HysteriaConfig, backup)
 	}
 	return os.WriteFile(cfg.Paths.HysteriaConfig, []byte(sb.String()), 0644)
 }
@@ -485,11 +523,11 @@ func runDoctor() error {
 		if err := run(c.Cmd[0], c.Cmd[1:]...); err != nil {
 			fmt.Printf("[FAIL] %s: %v\n", c.Name, err)
 		} else {
-			fmt.Printf("[OK]   %s\n", c.Name)
+			fmt.Printf("[OK] %s\n", c.Name)
 		}
 	}
 	fmt.Println("domain:", cfg.Domain)
-	fmt.Println("panel:", "http://"+cfg.Domain+":9443")
+	fmt.Println("panel:", "http://"+cfg.Domain+":9443/?token="+cfg.AdminToken)
 	fmt.Println("data:", cfg.Paths.DataFile)
 	return nil
 }
@@ -513,7 +551,7 @@ func runStatus() error {
 	fmt.Println("domain:", cfg.Domain)
 	fmt.Println("users:", len(st.Users))
 	fmt.Println("active:", active)
-	fmt.Println("panel:", "http://"+cfg.Domain+":9443")
+	fmt.Println("panel:", "http://"+cfg.Domain+":9443/?token="+cfg.AdminToken)
 	return nil
 }
 
@@ -524,6 +562,11 @@ func runServe() error {
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if !adminAllowed(cfg, r) {
+			w.Header().Set("WWW-Authenticate", `Bearer realm="LunaHub"`)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
 		st, _ := loadStore(cfg)
 		_ = dashboardTemplate.Execute(w, map[string]any{"Config": cfg, "Store": st})
 	})
@@ -535,11 +578,11 @@ func runServe() error {
 		token := strings.TrimPrefix(r.URL.Path, "/sub/")
 		st, err := loadStore(cfg)
 		if err != nil {
-			http.Error(w, err.Error(), 500)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		for _, u := range st.Users {
-			if u.Status == "active" && u.SubscriptionToken == token {
+			if u.Status == "active" && subtle.ConstantTimeCompare([]byte(u.SubscriptionToken), []byte(token)) == 1 {
 				links := vlessLink(cfg, u) + "\n" + hysteriaLink(cfg, u) + "\n"
 				encoded := base64.StdEncoding.EncodeToString([]byte(links))
 				w.Header().Set("Content-Type", "text/plain; charset=utf-8")
@@ -547,24 +590,52 @@ func runServe() error {
 				return
 			}
 		}
-		http.Error(w, "subscription not found", 404)
+		http.Error(w, "subscription not found", http.StatusNotFound)
 	})
-
 	log.Println("LunaHub listening on", cfg.PanelListen)
 	return http.ListenAndServe(cfg.PanelListen, mux)
 }
 
+func adminAllowed(cfg Config, r *http.Request) bool {
+	provided := r.URL.Query().Get("token")
+	if provided == "" {
+		provided = strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+	}
+	if provided == "" || cfg.AdminToken == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(provided), []byte(cfg.AdminToken)) == 1
+}
+
 var dashboardTemplate = template.Must(template.New("dashboard").Parse(`<!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><title>LunaHub</title><style>body{font-family:system-ui,sans-serif;max-width:960px;margin:40px auto;padding:0 16px}table{border-collapse:collapse;width:100%}td,th{border-bottom:1px solid #ddd;padding:8px;text-align:left}code{background:#f2f2f2;padding:2px 4px;border-radius:4px}</style></head>
+<head>
+  <meta charset="utf-8">
+  <title>LunaHub</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 40px; max-width: 1100px; }
+    code { background: #f2f2f2; padding: 2px 5px; border-radius: 4px; }
+    table { border-collapse: collapse; width: 100%; margin-top: 20px; }
+    th, td { border-bottom: 1px solid #ddd; padding: 10px; text-align: left; }
+    .warn { padding: 12px; background: #fff3cd; border: 1px solid #ffeeba; border-radius: 8px; }
+  </style>
+</head>
 <body>
-<h1>LunaHub</h1>
-<p>Domain: <code>{{.Config.Domain}}</code></p>
-<p>Users: <code>{{len .Store.Users}}</code></p>
-<h2>Users</h2>
-<table><tr><th>Name</th><th>Email</th><th>Status</th><th>Subscription</th></tr>{{range .Store.Users}}<tr><td>{{.Name}}</td><td>{{.Email}}</td><td>{{.Status}}</td><td><code>/sub/{{.SubscriptionToken}}</code></td></tr>{{end}}</table>
-<p>This is a temporary MVP dashboard. Use CLI for management.</p>
-</body></html>`))
+  <h1>LunaHub</h1>
+  <p>Domain: <code>{{.Config.Domain}}</code></p>
+  <p>Users: <code>{{len .Store.Users}}</code></p>
+  <div class="warn">Temporary Step 01 dashboard. Use CLI for management. Do not share this admin URL.</div>
+  <h2>Users</h2>
+  <table>
+    <thead><tr><th>Name</th><th>Email</th><th>Status</th><th>Subscription path</th></tr></thead>
+    <tbody>
+    {{range .Store.Users}}
+      <tr><td>{{.Name}}</td><td>{{.Email}}</td><td>{{.Status}}</td><td><code>/sub/{{.SubscriptionToken}}</code></td></tr>
+    {{end}}
+    </tbody>
+  </table>
+</body>
+</html>`))
 
 func subscriptionURL(cfg Config, u User) string {
 	return "http://" + cfg.Domain + ":9443/sub/" + url.PathEscape(u.SubscriptionToken)
@@ -590,7 +661,7 @@ func hysteriaLink(cfg Config, u User) string {
 	q.Set("obfs", "salamander")
 	q.Set("obfs-password", cfg.Hysteria.ObfsPassword)
 	name := "LunaHub-" + safeLabel(u.Name) + "-HY2"
-	auth := u.HysteriaUsername + ":" + u.HysteriaPassword
+	auth := url.UserPassword(u.HysteriaUsername, u.HysteriaPassword).String()
 	return fmt.Sprintf("hysteria2://%s@%s:443/?%s#%s", auth, cfg.Domain, q.Encode(), url.QueryEscape(name))
 }
 
@@ -599,6 +670,14 @@ func run(name string, args ...string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+func copyFile(src, dst string) error {
+	b, err := os.ReadFile(src)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(dst, b, 0644)
 }
 
 func randomHex(n int) string {

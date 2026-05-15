@@ -6,9 +6,11 @@ DOMAIN="${LUNAHUB_DOMAIN:-lunahub.space}"
 ACME_EMAIL="${LUNAHUB_ACME_EMAIL:-admin@lunahub.space}"
 REPO_URL="${LUNAHUB_REPO_URL:-}"
 INSTALL_DIR="/opt/lunahub"
+SRC_DIR="$INSTALL_DIR/src"
 CONFIG_DIR="/etc/lunahub"
 DATA_DIR="/var/lib/lunahub"
 LOG_DIR="/var/log/lunahub"
+BACKUP_DIR="/var/backups/lunahub"
 XRAY_CONFIG="/usr/local/etc/xray/config.json"
 HYSTERIA_CONFIG="/etc/hysteria/config.yaml"
 
@@ -23,6 +25,7 @@ require_root() {
 
 check_os() {
   [[ -f /etc/os-release ]] || fail "Cannot detect OS. /etc/os-release not found."
+  # shellcheck disable=SC1091
   . /etc/os-release
   [[ "${ID}" == "ubuntu" ]] || fail "This installer targets Ubuntu 24.04. Detected: ${ID:-unknown}"
   if [[ "${VERSION_ID}" != "24.04" ]]; then
@@ -37,42 +40,51 @@ install_packages() {
     curl wget unzip jq openssl ca-certificates ufw git build-essential golang-go iproute2 dnsutils
 }
 
-create_dirs() {
-  info "Creating LunaHub directories..."
-  install -d -m 755 "$INSTALL_DIR" "$CONFIG_DIR" "$DATA_DIR" "$LOG_DIR"
+create_user_and_dirs() {
+  info "Creating LunaHub user and directories..."
+  if ! id lunahub >/dev/null 2>&1; then
+    useradd --system --home /var/lib/lunahub --shell /usr/sbin/nologin lunahub
+  fi
+
+  install -d -m 755 "$INSTALL_DIR" "$SRC_DIR"
+  install -d -m 750 -o root -g lunahub "$CONFIG_DIR" "$DATA_DIR"
+  install -d -m 755 "$LOG_DIR" "$BACKUP_DIR"
 }
 
 install_xray() {
   info "Installing/updating Xray-core with official XTLS installer..."
-  bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
+  bash -c "$(curl -fsSL https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
+  command -v xray >/dev/null 2>&1 || fail "xray binary was not found after installation"
 }
 
 install_hysteria() {
   info "Installing/updating Hysteria2 with official installer..."
   bash <(curl -fsSL https://get.hy2.sh/)
+  command -v hysteria >/dev/null 2>&1 || fail "hysteria binary was not found after installation"
 }
 
 copy_sources() {
-  info "Copying repository files to $INSTALL_DIR..."
-  local src_dir
-  src_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  info "Copying repository files to $SRC_DIR..."
+  local current_dir
+  current_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+  rm -rf "$SRC_DIR"
 
   if [[ -n "$REPO_URL" ]]; then
-    rm -rf "$INSTALL_DIR/src"
-    git clone "$REPO_URL" "$INSTALL_DIR/src"
+    git clone --depth 1 "$REPO_URL" "$SRC_DIR"
   else
-    if [[ ! -f "$src_dir/go.mod" ]]; then
-      fail "LUNAHUB_REPO_URL is required when running install.sh from a raw URL. Example: LUNAHUB_REPO_URL=https://github.com/YOUR_GITHUB_USERNAME/lunahub.git bash <(curl -fsSL https://raw.githubusercontent.com/YOUR_GITHUB_USERNAME/lunahub/main/install.sh)"
+    if [[ ! -f "$current_dir/go.mod" ]]; then
+      fail "LUNAHUB_REPO_URL is required when running install.sh from a raw URL."
     fi
-    rm -rf "$INSTALL_DIR/src"
-    mkdir -p "$INSTALL_DIR/src"
-    cp -a "$src_dir/." "$INSTALL_DIR/src/"
+    mkdir -p "$SRC_DIR"
+    cp -a "$current_dir/." "$SRC_DIR/"
   fi
 }
 
 build_binary() {
   info "Building lunahub binary..."
-  cd "$INSTALL_DIR/src"
+  cd "$SRC_DIR"
+  gofmt -w ./cmd/lunahub/main.go
   go build -o /usr/local/bin/lunahub ./cmd/lunahub
   chmod 755 /usr/local/bin/lunahub
 }
@@ -84,16 +96,15 @@ generate_base_config() {
   fi
 
   info "Generating initial LunaHub config..."
-
   local x25519 private_key public_key short_id obfs_password admin_token
   x25519="$(xray x25519)"
   private_key="$(echo "$x25519" | awk '/Private key:/ {print $3}')"
   public_key="$(echo "$x25519" | awk '/Public key:/ {print $3}')"
   short_id="$(openssl rand -hex 8)"
-  obfs_password="$(openssl rand -base64 24 | tr -d '=+/ ' | cut -c1-24)"
+  obfs_password="$(openssl rand -base64 32 | tr -d '=+/ ' | cut -c1-24)"
   admin_token="$(openssl rand -hex 24)"
 
-  cat > "$CONFIG_DIR/config.json" <<JSON
+  cat > "$CONFIG_DIR/config.json" <<EOF
 {
   "domain": "$DOMAIN",
   "acme_email": "$ACME_EMAIL",
@@ -115,84 +126,81 @@ generate_base_config() {
   "hysteria": {
     "listen": ":443",
     "obfs_password": "$obfs_password",
-    "masquerade_url": "https://news.ycombinator.com/"
+    "masquerade_url": "https://www.cloudflare.com/"
   }
 }
-JSON
-  chmod 600 "$CONFIG_DIR/config.json"
+EOF
+  chown root:lunahub "$CONFIG_DIR/config.json"
+  chmod 640 "$CONFIG_DIR/config.json"
   ok "Generated config: $CONFIG_DIR/config.json"
-  echo ""
-  echo "Admin token for temporary API access: $admin_token"
-  echo "Save it. You can read it later with: sudo jq -r .admin_token $CONFIG_DIR/config.json"
-  echo ""
 }
 
 install_systemd() {
-  info "Installing systemd unit..."
-  cp "$INSTALL_DIR/src/systemd/lunahub.service" /etc/systemd/system/lunahub.service
+  info "Installing systemd service..."
+  install -m 644 "$SRC_DIR/systemd/lunahub.service" /etc/systemd/system/lunahub.service
   systemctl daemon-reload
   systemctl enable lunahub.service
 }
 
+init_database_and_configs() {
+  info "Initializing database and VPN configs..."
+  lunahub init-db
+  chown root:lunahub "$DATA_DIR/db.json"
+  chmod 660 "$DATA_DIR/db.json"
+  lunahub apply
+}
+
 configure_firewall() {
-  info "Configuring UFW rules..."
-  ufw allow 22/tcp || true
-  ufw allow 80/tcp || true
-  ufw allow 443/tcp || true
-  ufw allow 443/udp || true
-  ufw allow 9443/tcp || true
-  ufw --force enable || true
+  info "Configuring UFW firewall..."
+  ufw allow OpenSSH >/dev/null || true
+  ufw allow 80/tcp >/dev/null || true
+  ufw allow 443/tcp >/dev/null || true
+  ufw allow 443/udp >/dev/null || true
+  ufw allow 9443/tcp >/dev/null || true
+  ufw --force enable >/dev/null || true
+  ok "Firewall rules applied"
 }
 
-apply_initial_configs() {
-  info "Generating Xray and Hysteria2 configs..."
-  lunahub init-db || true
-  lunahub apply || true
-}
-
-restart_services() {
-  info "Restarting services..."
-  systemctl restart lunahub.service || true
-  systemctl restart xray.service || true
-  systemctl enable --now hysteria-server.service || true
+start_services() {
+  info "Starting services..."
+  systemctl restart xray.service || warn "xray restart failed. Check: journalctl -u xray -n 100 --no-pager"
+  systemctl restart hysteria-server.service || warn "hysteria-server restart failed. Check: journalctl -u hysteria-server -n 100 --no-pager"
+  systemctl restart lunahub.service
+  systemctl --no-pager --full status lunahub.service || true
 }
 
 print_summary() {
-  ok "LunaHub base installation complete."
-  echo ""
+  local token
+  token="$(jq -r '.admin_token' "$CONFIG_DIR/config.json")"
+  echo
+  ok "LunaHub Step 01 installed"
   echo "Domain:        $DOMAIN"
-  echo "Panel:         http://$DOMAIN:9443"
+  echo "Panel:         http://$DOMAIN:9443/?token=$token"
+  echo "Healthcheck:   http://$DOMAIN:9443/health"
   echo "Config:        $CONFIG_DIR/config.json"
-  echo "Data:          $DATA_DIR/db.json"
-  echo "Xray config:   $XRAY_CONFIG"
-  echo "Hysteria conf: $HYSTERIA_CONFIG"
-  echo ""
+  echo "Database:      $DATA_DIR/db.json"
+  echo
   echo "Next commands:"
   echo "  sudo lunahub doctor"
   echo "  sudo lunahub user create --name \"Test User\" --email test@example.com"
   echo "  sudo lunahub apply"
   echo "  sudo lunahub sub show --email test@example.com"
-  echo ""
-  echo "Service logs:"
-  echo "  journalctl -u lunahub -e --no-pager"
-  echo "  journalctl -u xray -e --no-pager"
-  echo "  journalctl -u hysteria-server -e --no-pager"
 }
 
 main() {
   require_root
   check_os
   install_packages
-  create_dirs
+  create_user_and_dirs
   install_xray
   install_hysteria
   copy_sources
   build_binary
   generate_base_config
   install_systemd
+  init_database_and_configs
   configure_firewall
-  apply_initial_configs
-  restart_services
+  start_services
   print_summary
 }
 

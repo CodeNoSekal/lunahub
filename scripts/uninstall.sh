@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-echo "This removes LunaHub service and binary only. It does NOT remove Xray/Hysteria configs or user data by default."
+echo "This removes LunaHub service and binary, but keeps backups."
 read -r -p "Continue? [y/N] " answer
 [[ "$answer" == "y" || "$answer" == "Y" ]] || exit 0
 
@@ -11,4 +11,4 @@ systemctl daemon-reload
 rm -f /usr/local/bin/lunahub
 rm -rf /opt/lunahub
 
-echo "Removed LunaHub service and binary. Preserved: /etc/lunahub, /var/lib/lunahub, /var/log/lunahub."
+echo "Kept: /etc/lunahub /var/lib/lunahub /var/backups/lunahub"
