@@ -1,0 +1,17 @@
+[Unit]
+Description=LunaHub Panel
+After=network-online.target xray.service hysteria-server.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/local/bin/lunahub serve
+Restart=always
+RestartSec=3
+Environment=LUNAHUB_CONFIG=/etc/lunahub/config.json
+ReadWritePaths=/etc/lunahub /var/lib/lunahub /var/log/lunahub /usr/local/etc/xray /etc/hysteria
+
+[Install]
+WantedBy=multi-user.target

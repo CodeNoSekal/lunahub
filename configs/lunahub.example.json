@@ -1,0 +1,24 @@
+{
+  "domain": "lunahub.space",
+  "acme_email": "admin@lunahub.space",
+  "admin_token": "generated-by-installer",
+  "panel_listen": "0.0.0.0:9443",
+  "paths": {
+    "data_file": "/var/lib/lunahub/db.json",
+    "xray_config": "/usr/local/etc/xray/config.json",
+    "hysteria_config": "/etc/hysteria/config.yaml"
+  },
+  "xray": {
+    "vless_port": 443,
+    "reality_dest": "www.cloudflare.com:443",
+    "reality_server_name": "www.cloudflare.com",
+    "reality_private_key": "generated-by-installer",
+    "reality_public_key": "generated-by-installer",
+    "reality_short_id": "generated-by-installer"
+  },
+  "hysteria": {
+    "listen": ":443",
+    "obfs_password": "generated-by-installer",
+    "masquerade_url": "https://news.ycombinator.com/"
+  }
+}
