@@ -1,0 +1,16 @@
+# build artifacts
+bin/
+dist/
+*.zip
+*.tar.gz
+
+# local secrets
+.env
+*.local
+lunahub.db.json
+config.local.json
+
+# OS/editor
+.DS_Store
+.vscode/
+.idea/
