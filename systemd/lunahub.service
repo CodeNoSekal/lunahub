@@ -1,0 +1,21 @@
+[Unit]
+Description=LunaHub VPN Control Panel
+After=network-online.target xray.service hysteria-server.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+Environment=LUNAHUB_CONFIG=/etc/lunahub/config.json
+ExecStart=/usr/local/bin/lunahub serve
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+ReadWritePaths=/etc/lunahub /etc/hysteria /usr/local/etc/xray /var/lib/lunahub /var/log/lunahub /var/log/xray
+
+[Install]
+WantedBy=multi-user.target

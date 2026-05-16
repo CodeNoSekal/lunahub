@@ -1,0 +1,24 @@
+# build artifacts
+bin/
+dist/
+*.zip
+*.tar.gz
+*.exe
+
+# local secrets and runtime data
+.env
+.env.*
+*.local
+*.log
+lunahub.db.json
+config.local.json
+config.json
+db.json
+
+# Go
+coverage.out
+
+# OS/editor
+.DS_Store
+.vscode/
+.idea/
