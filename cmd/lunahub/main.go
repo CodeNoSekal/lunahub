@@ -17,6 +17,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -129,24 +130,58 @@ func configPath() string {
 
 func loadConfig() (Config, error) {
 	var cfg Config
+
 	b, err := os.ReadFile(configPath())
 	if err != nil {
 		return cfg, err
 	}
+
 	if err := json.Unmarshal(b, &cfg); err != nil {
 		return cfg, err
 	}
-	if cfg.Domain == "" {
-		return cfg, errors.New("config domain is empty")
+
+	if err := validateConfig(cfg); err != nil {
+		return cfg, err
 	}
-	if cfg.Paths.DataFile == "" {
-		return cfg, errors.New("config paths.data_file is empty")
-	}
+
 	return cfg, nil
+}
+
+func validateConfig(cfg Config) error {
+	required := map[string]string{
+		"domain":                   cfg.Domain,
+		"acme_email":               cfg.ACMEEmail,
+		"admin_token":              cfg.AdminToken,
+		"panel_listen":             cfg.PanelListen,
+		"paths.data_file":          cfg.Paths.DataFile,
+		"paths.xray_config":        cfg.Paths.XrayConfig,
+		"paths.hysteria_config":    cfg.Paths.HysteriaConfig,
+		"xray.reality_dest":        cfg.Xray.RealityDest,
+		"xray.reality_server_name": cfg.Xray.RealityServerName,
+		"xray.reality_private_key": cfg.Xray.RealityPrivateKey,
+		"xray.reality_public_key":  cfg.Xray.RealityPublicKey,
+		"xray.reality_short_id":    cfg.Xray.RealityShortID,
+		"hysteria.listen":          cfg.Hysteria.Listen,
+		"hysteria.obfs_password":   cfg.Hysteria.ObfsPassword,
+		"hysteria.masquerade_url":  cfg.Hysteria.MasqueradeURL,
+	}
+
+	for name, value := range required {
+		if strings.TrimSpace(value) == "" {
+			return fmt.Errorf("config %s is empty", name)
+		}
+	}
+
+	if cfg.Xray.VLESSPort <= 0 || cfg.Xray.VLESSPort > 65535 {
+		return fmt.Errorf("config xray.vless_port is invalid: %d", cfg.Xray.VLESSPort)
+	}
+
+	return nil
 }
 
 func loadStore(cfg Config) (Store, error) {
 	var st Store
+
 	b, err := os.ReadFile(cfg.Paths.DataFile)
 	if errors.Is(err, os.ErrNotExist) {
 		return Store{Version: 1, Users: []User{}}, nil
@@ -154,15 +189,18 @@ func loadStore(cfg Config) (Store, error) {
 	if err != nil {
 		return st, err
 	}
+
 	if err := json.Unmarshal(b, &st); err != nil {
 		return st, err
 	}
+
 	if st.Version == 0 {
 		st.Version = 1
 	}
 	if st.Users == nil {
 		st.Users = []User{}
 	}
+
 	return st, nil
 }
 
@@ -170,10 +208,12 @@ func saveStore(cfg Config, st Store) error {
 	if err := os.MkdirAll(filepath.Dir(cfg.Paths.DataFile), 0750); err != nil {
 		return err
 	}
+
 	b, err := json.MarshalIndent(st, "", "  ")
 	if err != nil {
 		return err
 	}
+
 	return os.WriteFile(cfg.Paths.DataFile, append(b, '\n'), 0660)
 }
 
@@ -182,13 +222,16 @@ func runInitDB() error {
 	if err != nil {
 		return err
 	}
+
 	st, err := loadStore(cfg)
 	if err != nil {
 		return err
 	}
+
 	if err := saveStore(cfg, st); err != nil {
 		return err
 	}
+
 	fmt.Println("initialized:", cfg.Paths.DataFile)
 	return nil
 }
@@ -197,6 +240,7 @@ func runUser(args []string) error {
 	if len(args) < 1 {
 		return errors.New("missing user subcommand")
 	}
+
 	switch args[0] {
 	case "create":
 		fs := flag.NewFlagSet("user create", flag.ExitOnError)
@@ -224,6 +268,7 @@ func runUser(args []string) error {
 func createUser(name, email string) error {
 	name = strings.TrimSpace(name)
 	email = strings.ToLower(strings.TrimSpace(email))
+
 	if name == "" || email == "" {
 		return errors.New("--name and --email are required")
 	}
@@ -232,10 +277,12 @@ func createUser(name, email string) error {
 	if err != nil {
 		return err
 	}
+
 	st, err := loadStore(cfg)
 	if err != nil {
 		return err
 	}
+
 	for _, u := range st.Users {
 		if strings.EqualFold(u.Email, email) {
 			return fmt.Errorf("user already exists: %s", email)
@@ -255,10 +302,13 @@ func createUser(name, email string) error {
 		CreatedAt:         now,
 		UpdatedAt:         now,
 	}
+
 	st.Users = append(st.Users, u)
+
 	if err := saveStore(cfg, st); err != nil {
 		return err
 	}
+
 	fmt.Println("created user:", u.Email)
 	fmt.Println("subscription:", subscriptionURL(cfg, u))
 	return nil
@@ -269,15 +319,21 @@ func listUsers() error {
 	if err != nil {
 		return err
 	}
+
 	st, err := loadStore(cfg)
 	if err != nil {
 		return err
 	}
-	sort.Slice(st.Users, func(i, j int) bool { return st.Users[i].Email < st.Users[j].Email })
+
+	sort.Slice(st.Users, func(i, j int) bool {
+		return st.Users[i].Email < st.Users[j].Email
+	})
+
 	fmt.Printf("%-24s %-34s %-10s %-36s\n", "NAME", "EMAIL", "STATUS", "VLESS_UUID")
 	for _, u := range st.Users {
 		fmt.Printf("%-24s %-34s %-10s %-36s\n", u.Name, u.Email, u.Status, u.VLESSUUID)
 	}
+
 	return nil
 }
 
@@ -286,25 +342,31 @@ func setUserStatus(email, status string) error {
 	if email == "" {
 		return errors.New("--email is required")
 	}
+
 	cfg, err := loadConfig()
 	if err != nil {
 		return err
 	}
+
 	st, err := loadStore(cfg)
 	if err != nil {
 		return err
 	}
+
 	for i := range st.Users {
 		if strings.EqualFold(st.Users[i].Email, email) {
 			st.Users[i].Status = status
 			st.Users[i].UpdatedAt = time.Now().UTC()
+
 			if err := saveStore(cfg, st); err != nil {
 				return err
 			}
+
 			fmt.Printf("%s -> %s\n", email, status)
 			return nil
 		}
 	}
+
 	return fmt.Errorf("user not found: %s", email)
 }
 
@@ -312,6 +374,7 @@ func runSub(args []string) error {
 	if len(args) < 1 {
 		return errors.New("missing sub subcommand")
 	}
+
 	switch args[0] {
 	case "show":
 		fs := flag.NewFlagSet("sub show", flag.ExitOnError)
@@ -328,10 +391,12 @@ func showSub(email string) error {
 	if err != nil {
 		return err
 	}
+
 	st, err := loadStore(cfg)
 	if err != nil {
 		return err
 	}
+
 	for _, u := range st.Users {
 		if strings.EqualFold(u.Email, email) {
 			fmt.Println(subscriptionURL(cfg, u))
@@ -344,6 +409,7 @@ func showSub(email string) error {
 			return nil
 		}
 	}
+
 	return fmt.Errorf("user not found: %s", email)
 }
 
@@ -361,7 +427,6 @@ func runApply() error {
 	if err := writeXrayConfig(cfg, st); err != nil {
 		return err
 	}
-
 	if err := writeHysteriaConfig(cfg, st); err != nil {
 		return err
 	}
@@ -372,7 +437,6 @@ func runApply() error {
 	if err := run("systemctl", "restart", "xray.service"); err != nil {
 		return fmt.Errorf("restart xray.service failed: %w", err)
 	}
-
 	if err := run("systemctl", "enable", "--now", "hysteria-server.service"); err != nil {
 		return fmt.Errorf("enable/start hysteria-server.service failed: %w", err)
 	}
@@ -391,7 +455,12 @@ func writeXrayConfig(cfg Config, st Store) error {
 	clients := []Client{}
 	for _, u := range st.Users {
 		if u.Status == "active" {
-			clients = append(clients, Client{ID: u.VLESSUUID, Flow: "xtls-rprx-vision", Email: u.Email, Level: 0})
+			clients = append(clients, Client{
+				ID:    u.VLESSUUID,
+				Flow:  "xtls-rprx-vision",
+				Email: u.Email,
+				Level: 0,
+			})
 		}
 	}
 
@@ -447,7 +516,11 @@ func writeXrayConfig(cfg Config, st Store) error {
 			},
 		},
 		"outbounds": []any{
-			map[string]any{"protocol": "freedom", "tag": "direct", "settings": map[string]any{}},
+			map[string]any{
+				"protocol": "freedom",
+				"tag":      "direct",
+				"settings": map[string]any{},
+			},
 		},
 	}
 
@@ -455,16 +528,19 @@ func writeXrayConfig(cfg Config, st Store) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(cfg.Paths.XrayConfig), 0755); err != nil {
+
+	xrayDir := filepath.Dir(cfg.Paths.XrayConfig)
+	if err := os.MkdirAll(xrayDir, 0750); err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(cfg.Paths.XrayConfig), "config-*.json")
+
+	tmp, err := os.CreateTemp(xrayDir, "config-*.json")
 	if err != nil {
 		return err
 	}
 	tmpPath := tmp.Name()
 	defer os.Remove(tmpPath)
-	
+
 	if _, err := tmp.Write(append(b, '\n')); err != nil {
 		_ = tmp.Close()
 		return err
@@ -472,24 +548,40 @@ func writeXrayConfig(cfg Config, st Store) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	
+
 	if err := run("xray", "run", "-test", "-config", tmpPath); err != nil {
 		return fmt.Errorf("xray config test failed: %w", err)
 	}
-	
+
 	if _, err := os.Stat(cfg.Paths.XrayConfig); err == nil {
 		backup := cfg.Paths.XrayConfig + ".bak." + time.Now().UTC().Format("20060102-150405")
 		_ = copyFile(cfg.Paths.XrayConfig, backup)
 	}
-	
-	return os.Rename(tmpPath, cfg.Paths.XrayConfig)
+
+	if err := os.Rename(tmpPath, cfg.Paths.XrayConfig); err != nil {
+		return err
+	}
+
+	if err := chownRootGroup(xrayDir, "xray"); err != nil {
+		return err
+	}
+	if err := os.Chmod(xrayDir, 0750); err != nil {
+		return err
+	}
+	if err := chownRootGroup(cfg.Paths.XrayConfig, "xray"); err != nil {
+		return err
+	}
+	if err := os.Chmod(cfg.Paths.XrayConfig, 0640); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func writeHysteriaConfig(cfg Config, st Store) error {
 	var sb strings.Builder
 
 	sb.WriteString("listen: " + yamlQuote(cfg.Hysteria.Listen) + "\n\n")
-
 	sb.WriteString("acme:\n")
 	sb.WriteString("  domains:\n")
 	sb.WriteString("    - " + yamlQuote(cfg.Domain) + "\n")
@@ -524,7 +616,8 @@ func writeHysteriaConfig(cfg Config, st Store) error {
 	sb.WriteString("    url: " + yamlQuote(cfg.Hysteria.MasqueradeURL) + "\n")
 	sb.WriteString("    rewriteHost: true\n")
 
-	if err := os.MkdirAll(filepath.Dir(cfg.Paths.HysteriaConfig), 0755); err != nil {
+	hysteriaDir := filepath.Dir(cfg.Paths.HysteriaConfig)
+	if err := os.MkdirAll(hysteriaDir, 0755); err != nil {
 		return err
 	}
 
@@ -533,7 +626,25 @@ func writeHysteriaConfig(cfg Config, st Store) error {
 		_ = copyFile(cfg.Paths.HysteriaConfig, backup)
 	}
 
-	return os.WriteFile(cfg.Paths.HysteriaConfig, []byte(sb.String()), 0644)
+	tmp, err := os.CreateTemp(hysteriaDir, "config-*.yaml")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+
+	if _, err := tmp.WriteString(sb.String()); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmpPath, 0600); err != nil {
+		return err
+	}
+
+	return os.Rename(tmpPath, cfg.Paths.HysteriaConfig)
 }
 
 func runDoctor() error {
@@ -541,6 +652,7 @@ func runDoctor() error {
 	if err != nil {
 		return err
 	}
+
 	checks := []struct {
 		Name string
 		Cmd  []string
@@ -551,6 +663,7 @@ func runDoctor() error {
 		{"hysteria service", []string{"systemctl", "is-enabled", "hysteria-server.service"}},
 		{"lunahub service", []string{"systemctl", "is-enabled", "lunahub.service"}},
 	}
+
 	for _, c := range checks {
 		if err := run(c.Cmd[0], c.Cmd[1:]...); err != nil {
 			fmt.Printf("[FAIL] %s: %v\n", c.Name, err)
@@ -558,9 +671,11 @@ func runDoctor() error {
 			fmt.Printf("[OK] %s\n", c.Name)
 		}
 	}
+
 	fmt.Println("domain:", cfg.Domain)
 	fmt.Println("panel:", "http://"+cfg.Domain+":9443/?token="+cfg.AdminToken)
 	fmt.Println("data:", cfg.Paths.DataFile)
+
 	return nil
 }
 
@@ -569,21 +684,25 @@ func runStatus() error {
 	if err != nil {
 		return err
 	}
+
 	st, err := loadStore(cfg)
 	if err != nil {
 		return err
 	}
+
 	active := 0
 	for _, u := range st.Users {
 		if u.Status == "active" {
 			active++
 		}
 	}
+
 	fmt.Println("LunaHub")
 	fmt.Println("domain:", cfg.Domain)
 	fmt.Println("users:", len(st.Users))
 	fmt.Println("active:", active)
 	fmt.Println("panel:", "http://"+cfg.Domain+":9443/?token="+cfg.AdminToken)
+
 	return nil
 }
 
@@ -592,38 +711,51 @@ func runServe() error {
 	if err != nil {
 		return err
 	}
+
 	mux := http.NewServeMux()
+
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if !adminAllowed(cfg, r) {
 			w.Header().Set("WWW-Authenticate", `Bearer realm="LunaHub"`)
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
+
 		st, _ := loadStore(cfg)
-		_ = dashboardTemplate.Execute(w, map[string]any{"Config": cfg, "Store": st})
+		_ = dashboardTemplate.Execute(w, map[string]any{
+			"Config": cfg,
+			"Store":  st,
+		})
 	})
+
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"ok":true}`))
 	})
+
 	mux.HandleFunc("/sub/", func(w http.ResponseWriter, r *http.Request) {
 		token := strings.TrimPrefix(r.URL.Path, "/sub/")
+
 		st, err := loadStore(cfg)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+
 		for _, u := range st.Users {
 			if u.Status == "active" && subtle.ConstantTimeCompare([]byte(u.SubscriptionToken), []byte(token)) == 1 {
 				links := vlessLink(cfg, u) + "\n" + hysteriaLink(cfg, u) + "\n"
 				encoded := base64.StdEncoding.EncodeToString([]byte(links))
+
 				w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 				_, _ = w.Write([]byte(encoded))
 				return
 			}
 		}
+
 		http.Error(w, "subscription not found", http.StatusNotFound)
 	})
+
 	log.Println("LunaHub listening on", cfg.PanelListen)
 	return http.ListenAndServe(cfg.PanelListen, mux)
 }
@@ -636,34 +768,47 @@ func adminAllowed(cfg Config, r *http.Request) bool {
 	if provided == "" || cfg.AdminToken == "" {
 		return false
 	}
+
 	return subtle.ConstantTimeCompare([]byte(provided), []byte(cfg.AdminToken)) == 1
 }
 
 var dashboardTemplate = template.Must(template.New("dashboard").Parse(`<!doctype html>
-<html lang="en">
+<html>
 <head>
   <meta charset="utf-8">
   <title>LunaHub</title>
   <style>
-    body { font-family: system-ui, sans-serif; margin: 40px; max-width: 1100px; }
-    code { background: #f2f2f2; padding: 2px 5px; border-radius: 4px; }
+    body { font-family: system-ui, sans-serif; max-width: 980px; margin: 40px auto; padding: 0 16px; }
+    code { background: #f4f4f4; padding: 2px 6px; border-radius: 4px; }
     table { border-collapse: collapse; width: 100%; margin-top: 20px; }
     th, td { border-bottom: 1px solid #ddd; padding: 10px; text-align: left; }
-    .warn { padding: 12px; background: #fff3cd; border: 1px solid #ffeeba; border-radius: 8px; }
   </style>
 </head>
 <body>
   <h1>LunaHub</h1>
   <p>Domain: <code>{{.Config.Domain}}</code></p>
   <p>Users: <code>{{len .Store.Users}}</code></p>
-  <div class="warn">Temporary Step 01 dashboard. Use CLI for management. Do not share this admin URL.</div>
+  <p>Temporary Step 01 dashboard. Use CLI for management. Do not share this admin URL.</p>
+
   <h2>Users</h2>
   <table>
-    <thead><tr><th>Name</th><th>Email</th><th>Status</th><th>Subscription path</th></tr></thead>
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th>Email</th>
+        <th>Status</th>
+        <th>Subscription path</th>
+      </tr>
+    </thead>
     <tbody>
-    {{range .Store.Users}}
-      <tr><td>{{.Name}}</td><td>{{.Email}}</td><td>{{.Status}}</td><td><code>/sub/{{.SubscriptionToken}}</code></td></tr>
-    {{end}}
+      {{range .Store.Users}}
+      <tr>
+        <td>{{.Name}}</td>
+        <td>{{.Email}}</td>
+        <td>{{.Status}}</td>
+        <td><code>/sub/{{.SubscriptionToken}}</code></td>
+      </tr>
+      {{end}}
     </tbody>
   </table>
 </body>
@@ -683,8 +828,17 @@ func vlessLink(cfg Config, u User) string {
 	q.Set("sid", cfg.Xray.RealityShortID)
 	q.Set("type", "tcp")
 	q.Set("flow", "xtls-rprx-vision")
+
 	name := "LunaHub-" + safeLabel(u.Name) + "-VLESS"
-	return fmt.Sprintf("vless://%s@%s:%d?%s#%s", u.VLESSUUID, cfg.Domain, cfg.Xray.VLESSPort, q.Encode(), url.QueryEscape(name))
+
+	return fmt.Sprintf(
+		"vless://%s@%s:%d?%s#%s",
+		u.VLESSUUID,
+		cfg.Domain,
+		cfg.Xray.VLESSPort,
+		q.Encode(),
+		url.QueryEscape(name),
+	)
 }
 
 func hysteriaLink(cfg Config, u User) string {
@@ -692,9 +846,17 @@ func hysteriaLink(cfg Config, u User) string {
 	q.Set("sni", cfg.Domain)
 	q.Set("obfs", "salamander")
 	q.Set("obfs-password", cfg.Hysteria.ObfsPassword)
+
 	name := "LunaHub-" + safeLabel(u.Name) + "-HY2"
 	auth := url.UserPassword(u.HysteriaUsername, u.HysteriaPassword).String()
-	return fmt.Sprintf("hysteria2://%s@%s:443/?%s#%s", auth, cfg.Domain, q.Encode(), url.QueryEscape(name))
+
+	return fmt.Sprintf(
+		"hysteria2://%s@%s:443/?%s#%s",
+		auth,
+		cfg.Domain,
+		q.Encode(),
+		url.QueryEscape(name),
+	)
 }
 
 func run(name string, args ...string) error {
@@ -704,12 +866,45 @@ func run(name string, args ...string) error {
 	return cmd.Run()
 }
 
+func lookupGroupID(groupName string) (int, error) {
+	out, err := exec.Command("getent", "group", groupName).Output()
+	if err != nil {
+		return 0, fmt.Errorf("lookup group %s: %w", groupName, err)
+	}
+
+	parts := strings.Split(strings.TrimSpace(string(out)), ":")
+	if len(parts) < 3 {
+		return 0, fmt.Errorf("lookup group %s: unexpected getent output %q", groupName, strings.TrimSpace(string(out)))
+	}
+
+	gid, err := strconv.Atoi(parts[2])
+	if err != nil {
+		return 0, fmt.Errorf("parse gid for group %s: %w", groupName, err)
+	}
+
+	return gid, nil
+}
+
+func chownRootGroup(path, groupName string) error {
+	gid, err := lookupGroupID(groupName)
+	if err != nil {
+		return err
+	}
+
+	if err := os.Chown(path, 0, gid); err != nil {
+		return fmt.Errorf("chown root:%s %s: %w", groupName, path, err)
+	}
+
+	return nil
+}
+
 func copyFile(src, dst string) error {
 	b, err := os.ReadFile(src)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(dst, b, 0644)
+
+	return os.WriteFile(dst, b, 0600)
 }
 
 func randomHex(n int) string {
@@ -727,8 +922,10 @@ func randomToken(n int) string {
 func newUUID() string {
 	b := make([]byte, 16)
 	_, _ = rand.Read(b)
+
 	b[6] = (b[6] & 0x0f) | 0x40
 	b[8] = (b[8] & 0x3f) | 0x80
+
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
 
@@ -736,15 +933,18 @@ func safeUsername(email string) string {
 	s := strings.ToLower(email)
 	replacer := strings.NewReplacer("@", "_", ".", "_", "+", "_", "-", "_")
 	s = replacer.Replace(s)
+
 	var out strings.Builder
 	for _, r := range s {
 		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_' {
 			out.WriteRune(r)
 		}
 	}
+
 	if out.Len() == 0 {
 		return "user_" + randomHex(4)
 	}
+
 	return out.String()
 }
 

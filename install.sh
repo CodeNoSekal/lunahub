@@ -1,16 +1,20 @@
 #!/usr/bin/env bash
+
 set -Eeuo pipefail
 
 PROJECT="lunahub"
+
 DOMAIN="${LUNAHUB_DOMAIN:-lunahub.space}"
 ACME_EMAIL="${LUNAHUB_ACME_EMAIL:-admin@lunahub.space}"
 REPO_URL="${LUNAHUB_REPO_URL:-}"
+
 INSTALL_DIR="/opt/lunahub"
 SRC_DIR="$INSTALL_DIR/src"
 CONFIG_DIR="/etc/lunahub"
 DATA_DIR="/var/lib/lunahub"
 LOG_DIR="/var/log/lunahub"
 BACKUP_DIR="/var/backups/lunahub"
+
 XRAY_CONFIG="/usr/local/etc/xray/config.json"
 HYSTERIA_CONFIG="/etc/hysteria/config.yaml"
 
@@ -27,7 +31,9 @@ check_os() {
   [[ -f /etc/os-release ]] || fail "Cannot detect OS. /etc/os-release not found."
   # shellcheck disable=SC1091
   . /etc/os-release
+
   [[ "${ID}" == "ubuntu" ]] || fail "This installer targets Ubuntu 24.04. Detected: ${ID:-unknown}"
+
   if [[ "${VERSION_ID}" != "24.04" ]]; then
     warn "Expected Ubuntu 24.04, detected ${VERSION_ID}. Continuing, but this is not the target OS."
   fi
@@ -41,26 +47,41 @@ install_packages() {
 }
 
 create_user_and_dirs() {
-  info "Creating LunaHub user and directories..."
+  info "Creating LunaHub/Xray users and directories..."
+
   if ! id lunahub >/dev/null 2>&1; then
     useradd --system --home /var/lib/lunahub --shell /usr/sbin/nologin lunahub
+  fi
+
+  if ! id xray >/dev/null 2>&1; then
+    useradd --system --no-create-home --shell /usr/sbin/nologin xray
   fi
 
   install -d -m 755 "$INSTALL_DIR" "$SRC_DIR"
   install -d -m 750 -o root -g lunahub "$CONFIG_DIR" "$DATA_DIR"
   install -d -m 755 "$LOG_DIR" "$BACKUP_DIR"
+
+  install -d -m 750 -o root -g xray "$(dirname "$XRAY_CONFIG")"
+  install -d -m 750 -o xray -g xray /var/log/xray
 }
 
 install_xray() {
   info "Installing/updating Xray-core with official XTLS installer..."
   bash -c "$(curl -fsSL https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
   command -v xray >/dev/null 2>&1 || fail "xray binary was not found after installation"
+
+  if ! id xray >/dev/null 2>&1; then
+    useradd --system --no-create-home --shell /usr/sbin/nologin xray
+  fi
+
+  install -d -m 750 -o root -g xray "$(dirname "$XRAY_CONFIG")"
+  install -d -m 750 -o xray -g xray /var/log/xray
 }
 
 install_hysteria() {
   info "Installing/updating Hysteria2 with official installer..."
-
   local hy_installer="/tmp/hysteria-install.sh"
+
   curl -fsSL https://get.hy2.sh/ -o "$hy_installer"
   bash "$hy_installer"
   rm -f "$hy_installer"
@@ -89,6 +110,7 @@ copy_sources() {
 build_binary() {
   info "Building lunahub binary..."
   cd "$SRC_DIR"
+
   gofmt -w ./cmd/lunahub/main.go
   go build -o /usr/local/bin/lunahub ./cmd/lunahub
   chmod 755 /usr/local/bin/lunahub
@@ -108,7 +130,6 @@ generate_base_config() {
   private_key="$(printf '%s\n' "$x25519" | awk -F': *' '
     $1 == "PrivateKey" { print $2; exit }
     $1 == "Private key" { print $2; exit }
-    $1 == "Private key" { print $2; exit }
   ')"
 
   public_key="$(printf '%s\n' "$x25519" | awk -F': *' '
@@ -118,7 +139,7 @@ generate_base_config() {
   ')"
 
   if [[ -z "$private_key" || -z "$public_key" ]]; then
-    echo "$x25519" >&2
+    printf '%s\n' "$x25519" >&2
     fail "Failed to parse Xray x25519 keys"
   fi
 
@@ -180,57 +201,74 @@ EOF
 
 install_systemd() {
   info "Installing systemd service..."
+
   install -m 644 "$SRC_DIR/systemd/lunahub.service" /etc/systemd/system/lunahub.service
+
+  install -d -m 755 /etc/systemd/system/xray.service.d
+  cat > /etc/systemd/system/xray.service.d/20-lunahub-user.conf <<'EOF'
+[Service]
+User=xray
+Group=xray
+EOF
+
   systemctl daemon-reload
+
   systemctl enable lunahub.service
   systemctl enable xray.service || true
   systemctl enable hysteria-server.service || true
-  systemctl enable lunahub.service
 }
 
 init_database_and_configs() {
   info "Initializing database and VPN configs..."
+
   lunahub init-db
+
   chown root:lunahub "$DATA_DIR/db.json"
   chmod 660 "$DATA_DIR/db.json"
+
   lunahub apply
 }
 
 configure_firewall() {
   info "Configuring UFW firewall..."
+
   ufw allow OpenSSH >/dev/null || true
   ufw allow 80/tcp >/dev/null || true
   ufw allow 443/tcp >/dev/null || true
   ufw allow 443/udp >/dev/null || true
   ufw allow 9443/tcp >/dev/null || true
   ufw --force enable >/dev/null || true
+
   ok "Firewall rules applied"
 }
 
 start_services() {
   info "Starting services..."
+
   systemctl restart xray.service || warn "xray restart failed. Check: journalctl -u xray -n 100 --no-pager"
   systemctl restart hysteria-server.service || warn "hysteria-server restart failed. Check: journalctl -u hysteria-server -n 100 --no-pager"
   systemctl restart lunahub.service
+
   systemctl --no-pager --full status lunahub.service || true
 }
 
 print_summary() {
   local token
   token="$(jq -r '.admin_token' "$CONFIG_DIR/config.json")"
+
   echo
   ok "LunaHub Step 01 installed"
-  echo "Domain:        $DOMAIN"
-  echo "Panel:         http://$DOMAIN:9443/?token=$token"
-  echo "Healthcheck:   http://$DOMAIN:9443/health"
-  echo "Config:        $CONFIG_DIR/config.json"
-  echo "Database:      $DATA_DIR/db.json"
+  echo "Domain: $DOMAIN"
+  echo "Panel: http://$DOMAIN:9443/?token=$token"
+  echo "Healthcheck: http://$DOMAIN:9443/health"
+  echo "Config: $CONFIG_DIR/config.json"
+  echo "Database: $DATA_DIR/db.json"
   echo
   echo "Next commands:"
-  echo "  sudo lunahub doctor"
-  echo "  sudo lunahub user create --name \"Test User\" --email test@example.com"
-  echo "  sudo lunahub apply"
-  echo "  sudo lunahub sub show --email test@example.com"
+  echo " sudo lunahub doctor"
+  echo " sudo lunahub user create --name \"Test User\" --email test@example.com"
+  echo " sudo lunahub apply"
+  echo " sudo lunahub sub show --email test@example.com"
 }
 
 main() {
