@@ -102,9 +102,26 @@ generate_base_config() {
 
   info "Generating initial LunaHub config..."
   local x25519 private_key public_key short_id obfs_password admin_token
+
   x25519="$(xray x25519)"
-  private_key="$(echo "$x25519" | awk '/Private key:/ {print $3}')"
-  public_key="$(echo "$x25519" | awk '/Public key:/ {print $3}')"
+
+  private_key="$(printf '%s\n' "$x25519" | awk -F': *' '
+    $1 == "PrivateKey" { print $2; exit }
+    $1 == "Private key" { print $2; exit }
+    $1 == "Private key" { print $2; exit }
+  ')"
+
+  public_key="$(printf '%s\n' "$x25519" | awk -F': *' '
+    $1 == "Password (PublicKey)" { print $2; exit }
+    $1 == "PublicKey" { print $2; exit }
+    $1 == "Public key" { print $2; exit }
+  ')"
+
+  if [[ -z "$private_key" || -z "$public_key" ]]; then
+    echo "$x25519" >&2
+    fail "Failed to parse Xray x25519 keys"
+  fi
+
   short_id="$(openssl rand -hex 8)"
   obfs_password="$(openssl rand -base64 32 | tr -d '=+/ ' | cut -c1-24)"
   admin_token="$(openssl rand -hex 24)"
@@ -135,8 +152,29 @@ generate_base_config() {
   }
 }
 EOF
+
+  jq -e '
+    .domain != "" and
+    .acme_email != "" and
+    .admin_token != "" and
+    .panel_listen != "" and
+    .paths.data_file != "" and
+    .paths.xray_config != "" and
+    .paths.hysteria_config != "" and
+    .xray.vless_port > 0 and
+    .xray.reality_dest != "" and
+    .xray.reality_server_name != "" and
+    .xray.reality_private_key != "" and
+    .xray.reality_public_key != "" and
+    .xray.reality_short_id != "" and
+    .hysteria.listen != "" and
+    .hysteria.obfs_password != "" and
+    .hysteria.masquerade_url != ""
+  ' "$CONFIG_DIR/config.json" >/dev/null || fail "Generated config is invalid: $CONFIG_DIR/config.json"
+
   chown root:lunahub "$CONFIG_DIR/config.json"
   chmod 640 "$CONFIG_DIR/config.json"
+
   ok "Generated config: $CONFIG_DIR/config.json"
 }
 
