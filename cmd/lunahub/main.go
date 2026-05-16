@@ -447,32 +447,49 @@ func writeXrayConfig(cfg Config, st Store) error {
 	if err := os.MkdirAll(filepath.Dir(cfg.Paths.XrayConfig), 0755); err != nil {
 		return err
 	}
-	tmp := cfg.Paths.XrayConfig + ".tmp"
-	if err := os.WriteFile(tmp, append(b, '\n'), 0644); err != nil {
+	tmp, err := os.CreateTemp(filepath.Dir(cfg.Paths.XrayConfig), "config-*.json")
+	if err != nil {
 		return err
 	}
-	if err := run("xray", "run", "-test", "-config", tmp); err != nil {
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	
+	if _, err := tmp.Write(append(b, '\n')); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	
+	if err := run("xray", "run", "-test", "-config", tmpPath); err != nil {
 		return fmt.Errorf("xray config test failed: %w", err)
 	}
+	
 	if _, err := os.Stat(cfg.Paths.XrayConfig); err == nil {
 		backup := cfg.Paths.XrayConfig + ".bak." + time.Now().UTC().Format("20060102-150405")
 		_ = copyFile(cfg.Paths.XrayConfig, backup)
 	}
-	return os.Rename(tmp, cfg.Paths.XrayConfig)
+	
+	return os.Rename(tmpPath, cfg.Paths.XrayConfig)
 }
 
 func writeHysteriaConfig(cfg Config, st Store) error {
 	var sb strings.Builder
-	sb.WriteString("listen: " + cfg.Hysteria.Listen + "\n\n")
+
+	sb.WriteString("listen: " + yamlQuote(cfg.Hysteria.Listen) + "\n\n")
+
 	sb.WriteString("acme:\n")
 	sb.WriteString("  domains:\n")
-	sb.WriteString("    - " + cfg.Domain + "\n")
-	sb.WriteString("  email: " + cfg.ACMEEmail + "\n")
+	sb.WriteString("    - " + yamlQuote(cfg.Domain) + "\n")
+	sb.WriteString("  email: " + yamlQuote(cfg.ACMEEmail) + "\n")
 	sb.WriteString("  ca: letsencrypt\n")
 	sb.WriteString("  type: http\n\n")
+
 	sb.WriteString("auth:\n")
 	sb.WriteString("  type: userpass\n")
 	sb.WriteString("  userpass:\n")
+
 	active := 0
 	for _, u := range st.Users {
 		if u.Status == "active" {
@@ -481,26 +498,30 @@ func writeHysteriaConfig(cfg Config, st Store) error {
 		}
 	}
 	if active == 0 {
-		sb.WriteString("    disabled: disabled\n")
+		sb.WriteString("    disabled: " + yamlQuote(randomToken(32)) + "\n")
 	}
+
 	sb.WriteString("\n")
 	sb.WriteString("obfs:\n")
 	sb.WriteString("  type: salamander\n")
 	sb.WriteString("  salamander:\n")
 	sb.WriteString("    password: " + yamlQuote(cfg.Hysteria.ObfsPassword) + "\n\n")
+
 	sb.WriteString("masquerade:\n")
 	sb.WriteString("  type: proxy\n")
 	sb.WriteString("  proxy:\n")
-	sb.WriteString("    url: " + cfg.Hysteria.MasqueradeURL + "\n")
+	sb.WriteString("    url: " + yamlQuote(cfg.Hysteria.MasqueradeURL) + "\n")
 	sb.WriteString("    rewriteHost: true\n")
 
 	if err := os.MkdirAll(filepath.Dir(cfg.Paths.HysteriaConfig), 0755); err != nil {
 		return err
 	}
+
 	if _, err := os.Stat(cfg.Paths.HysteriaConfig); err == nil {
 		backup := cfg.Paths.HysteriaConfig + ".bak." + time.Now().UTC().Format("20060102-150405")
 		_ = copyFile(cfg.Paths.HysteriaConfig, backup)
 	}
+
 	return os.WriteFile(cfg.Paths.HysteriaConfig, []byte(sb.String()), 0644)
 }
 
