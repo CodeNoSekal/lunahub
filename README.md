@@ -29,7 +29,7 @@ After you push these files to your GitHub repository, use the explicit install f
 sudo LUNAHUB_REPO_URL=https://github.com/CodeNoSekal/lunahub.git \
   LUNAHUB_DOMAIN=lunahub.space \
   LUNAHUB_ACME_EMAIL=admin@lunahub.space \
-  bash <(curl -fsSL https://raw.githubusercontent.com/CodeNoSekal/lunahub/main/install.sh)
+  bash <(curl -fsSL https://raw.githubusercontent.com/CodeNoSekal/lunahub/install.sh)
 ```
 
 ## First commands after install
