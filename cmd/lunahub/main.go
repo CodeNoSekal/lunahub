@@ -352,20 +352,31 @@ func runApply() error {
 	if err != nil {
 		return err
 	}
+
 	st, err := loadStore(cfg)
 	if err != nil {
 		return err
 	}
+
 	if err := writeXrayConfig(cfg, st); err != nil {
 		return err
 	}
+
 	if err := writeHysteriaConfig(cfg, st); err != nil {
 		return err
 	}
+
 	fmt.Println("wrote:", cfg.Paths.XrayConfig)
 	fmt.Println("wrote:", cfg.Paths.HysteriaConfig)
-	_ = run("systemctl", "restart", "xray.service")
-	_ = run("systemctl", "restart", "hysteria-server.service")
+
+	if err := run("systemctl", "restart", "xray.service"); err != nil {
+		return fmt.Errorf("restart xray.service failed: %w", err)
+	}
+
+	if err := run("systemctl", "enable", "--now", "hysteria-server.service"); err != nil {
+		return fmt.Errorf("enable/start hysteria-server.service failed: %w", err)
+	}
+
 	return nil
 }
 
