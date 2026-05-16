@@ -59,7 +59,12 @@ install_xray() {
 
 install_hysteria() {
   info "Installing/updating Hysteria2 with official installer..."
-  bash <(curl -fsSL https://get.hy2.sh/)
+
+  local hy_installer="/tmp/hysteria-install.sh"
+  curl -fsSL https://get.hy2.sh/ -o "$hy_installer"
+  bash "$hy_installer"
+  rm -f "$hy_installer"
+
   command -v hysteria >/dev/null 2>&1 || fail "hysteria binary was not found after installation"
 }
 
@@ -140,6 +145,9 @@ install_systemd() {
   install -m 644 "$SRC_DIR/systemd/lunahub.service" /etc/systemd/system/lunahub.service
   systemctl daemon-reload
   systemctl enable lunahub.service
+  systemctl enable xray.service || true
+  systemctl enable hysteria-server.service || true
+  systemctl enable lunahub.service
 }
 
 init_database_and_configs() {
@@ -198,8 +206,8 @@ main() {
   build_binary
   generate_base_config
   install_systemd
-  init_database_and_configs
   configure_firewall
+  init_database_and_configs
   start_services
   print_summary
 }
