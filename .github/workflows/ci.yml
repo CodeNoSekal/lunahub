@@ -1,0 +1,25 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+      - name: gofmt
+        run: test -z "$(gofmt -l ./cmd)"
+      - name: go test
+        run: go test ./...
+      - name: build
+        run: go build -o /tmp/lunahub ./cmd/lunahub
+      - name: bash syntax
+        run: |
+          bash -n install.sh
+          bash -n scripts/uninstall.sh
+          bash -n scripts/dev-check.sh

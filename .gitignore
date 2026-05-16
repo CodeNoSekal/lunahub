@@ -1,0 +1,23 @@
+# build artifacts
+bin/
+dist/
+*.zip
+*.tar.gz
+*.deb
+
+# local runtime/secrets
+.env
+*.local
+*.bak
+lunahub.db.json
+config.local.json
+config.json
+
+# logs
+*.log
+logs/
+
+# editor/os
+.DS_Store
+.vscode/
+.idea/
