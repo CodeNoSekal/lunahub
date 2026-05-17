@@ -6,7 +6,7 @@ DEFAULT_REPO_URL="https://github.com/CodeNoSekal/lunahub.git"
 DEFAULT_REPO_BRANCH="main"
 
 PANEL_DOMAIN="${LUNAHUB_PANEL_DOMAIN:-${LUNAHUB_DOMAIN:-}}"
-VPN_DOMAIN="${LUNAHUB_VPN_DOMAIN:-}"
+VPN_DOMAIN="${LUNAHUB_VPN_DOMAIN:-${LUNAHUB_DOMAIN:-}}"
 ACME_EMAIL="${LUNAHUB_ACME_EMAIL:-}"
 REPO_URL="${LUNAHUB_REPO_URL:-$DEFAULT_REPO_URL}"
 REPO_BRANCH="${LUNAHUB_REPO_BRANCH:-$DEFAULT_REPO_BRANCH}"
@@ -38,16 +38,16 @@ warn() { echo -e "\033[1;33m[WARN]\033[0m $*"; }
 fail() { echo -e "\033[1;31m[FAIL]\033[0m $*"; exit 1; }
 
 require_root() {
-  [[ "${EUID}" -eq 0 ]] || fail "Запусти от root: sudo bash install.sh"
+  [[ "${EUID}" -eq 0 ]] || fail "Run as root: sudo bash install.sh"
 }
 
 check_os() {
-  [[ -f /etc/os-release ]] || fail "Не могу определить ОС: /etc/os-release не найден"
+  [[ -f /etc/os-release ]] || fail "Cannot detect OS: /etc/os-release was not found"
   # shellcheck disable=SC1091
   . /etc/os-release
-  [[ "${ID}" == "ubuntu" || "${ID}" == "debian" ]] || fail "Поддерживаются Ubuntu/Debian. Сейчас: ${ID:-unknown}"
+  [[ "${ID}" == "ubuntu" || "${ID}" == "debian" ]] || fail "Ubuntu/Debian is required. Current OS: ${ID:-unknown}"
   if [[ "${ID}" == "ubuntu" && "${VERSION_ID:-}" != "24.04" ]]; then
-    warn "Целевая система — Ubuntu 24.04. Сейчас: ${VERSION_ID:-unknown}. Продолжаю, но лучше использовать Ubuntu 24.04."
+    warn "Target OS is Ubuntu 24.04. Current version: ${VERSION_ID:-unknown}. Continuing anyway."
   fi
 }
 
@@ -67,57 +67,60 @@ ask_required() {
     return
   fi
   value="$(read_tty "$label: ")"
-  [[ -n "$value" ]] || fail "Не указано значение: $label. Можно передать через переменную окружения $var_name."
+  [[ -n "$value" ]] || fail "Missing value: $label. You can pass it through the $var_name environment variable."
   printf -v "$var_name" '%s' "$value"
 }
 
-ask_optional() {
-  local var_name="$1" label="$2" default="$3" current="${!var_name:-}" value
-  if [[ -n "$current" ]]; then
-    return
-  fi
-  value="$(read_tty "$label [$default]: ")"
-  [[ -n "$value" ]] || value="$default"
-  printf -v "$var_name" '%s' "$value"
+normalize_domain() {
+  echo "$1" | tr '[:upper:]' '[:lower:]' | sed -E 's#^https?://##; s#/.*$##; s/:.*$//'
+}
+
+validate_port() {
+  local name="$1" value="$2"
+  [[ "$value" =~ ^[0-9]+$ ]] || fail "$name must be a number: $value"
+  (( value >= 1 && value <= 65535 )) || fail "$name must be between 1 and 65535: $value"
 }
 
 collect_install_settings() {
   echo
   echo "LunaHub installer"
   echo "-----------------"
-  ask_required PANEL_DOMAIN "Домен панели, например panel.example.com"
-  ask_required VPN_DOMAIN "Домен или поддомен VPN, например vpn.example.com"
-  ask_required ACME_EMAIL "Email для Let's Encrypt, например admin@example.com"
+  ask_required PANEL_DOMAIN "Panel domain, for example panel.example.com"
+  ask_required VPN_DOMAIN "VPN domain, for example vpn.example.com"
+  ask_required ACME_EMAIL "Let's Encrypt email, for example admin@example.com"
 
-  PANEL_DOMAIN="$(echo "$PANEL_DOMAIN" | tr '[:upper:]' '[:lower:]' | sed -E 's#^https?://##; s#/.*$##; s/:.*$//')"
-  VPN_DOMAIN="$(echo "$VPN_DOMAIN" | tr '[:upper:]' '[:lower:]' | sed -E 's#^https?://##; s#/.*$##; s/:.*$//')"
+  PANEL_DOMAIN="$(normalize_domain "$PANEL_DOMAIN")"
+  VPN_DOMAIN="$(normalize_domain "$VPN_DOMAIN")"
 
-  [[ "$PANEL_DOMAIN" =~ ^[a-z0-9._-]+$ ]] || fail "Некорректный домен панели: $PANEL_DOMAIN"
-  [[ "$VPN_DOMAIN" =~ ^[a-z0-9._-]+$ ]] || fail "Некорректный VPN-домен: $VPN_DOMAIN"
-  [[ "$ACME_EMAIL" == *"@"* ]] || fail "Некорректный email: $ACME_EMAIL"
+  [[ "$PANEL_DOMAIN" =~ ^[a-z0-9._-]+$ ]] || fail "Invalid panel domain: $PANEL_DOMAIN"
+  [[ "$VPN_DOMAIN" =~ ^[a-z0-9._-]+$ ]] || fail "Invalid VPN domain: $VPN_DOMAIN"
+  [[ "$ACME_EMAIL" == *"@"* ]] || fail "Invalid email: $ACME_EMAIL"
+  validate_port "LUNAHUB_PANEL_PORT" "$PANEL_PORT"
+  validate_port "LUNAHUB_VPN_TCP_PORT" "$VPN_TCP_PORT"
+  validate_port "LUNAHUB_VPN_UDP_PORT" "$VPN_UDP_PORT"
 
   if [[ "$PANEL_DOMAIN" == "$VPN_DOMAIN" ]]; then
-    warn "Панель и VPN используют один домен. Лучше разделить: panel.example.com и vpn.example.com. Продолжаю."
+    warn "The panel and VPN use the same domain. Separate domains are recommended, but this setup is supported."
   fi
 
   echo
-  info "Панель: https://$PANEL_DOMAIN"
+  info "Panel: https://$PANEL_DOMAIN"
   info "VPN: $VPN_DOMAIN"
-  info "Email ACME: $ACME_EMAIL"
+  info "ACME email: $ACME_EMAIL"
   info "VLESS REALITY TCP: $VPN_TCP_PORT"
   info "Hysteria2 UDP: $VPN_UDP_PORT"
 }
 
 install_packages() {
-  info "Устанавливаю базовые пакеты..."
+  info "Installing base packages..."
   apt-get update -y
   DEBIAN_FRONTEND=noninteractive apt-get install -y \
     curl wget unzip jq openssl ca-certificates ufw git build-essential golang-go iproute2 dnsutils debian-keyring debian-archive-keyring apt-transport-https gnupg lsb-release
 
   if ! command -v caddy >/dev/null 2>&1; then
-    info "Устанавливаю Caddy..."
+    info "Installing Caddy..."
     if ! DEBIAN_FRONTEND=noninteractive apt-get install -y caddy; then
-      warn "Caddy не найден в стандартном apt. Подключаю официальный репозиторий Caddy."
+      warn "Caddy was not found in the default apt repositories. Adding the official Caddy repository."
       curl -fsSL https://dl.cloudsmith.io/public/caddy/stable/gpg.key | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
       curl -fsSL https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt | tee /etc/apt/sources.list.d/caddy-stable.list >/dev/null
       apt-get update -y
@@ -129,7 +132,7 @@ install_packages() {
 }
 
 create_users_and_dirs() {
-  info "Создаю пользователей и директории..."
+  info "Creating users and directories..."
 
   if ! id lunahub >/dev/null 2>&1; then
     useradd --system --home "$DATA_DIR" --shell /usr/sbin/nologin lunahub
@@ -148,28 +151,26 @@ create_users_and_dirs() {
 }
 
 install_xray() {
-  info "Устанавливаю или обновляю Xray-core..."
+  info "Installing or updating Xray-core..."
   bash -c "$(curl -fsSL https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
-  command -v xray >/dev/null 2>&1 || fail "xray не найден после установки"
-
+  command -v xray >/dev/null 2>&1 || fail "xray was not found after installation"
   install -d -m 750 -o root -g xray "$(dirname "$XRAY_CONFIG")"
   install -d -m 750 -o xray -g xray /var/log/xray
 }
 
 install_hysteria() {
-  info "Устанавливаю или обновляю Hysteria2..."
+  info "Installing or updating Hysteria2..."
   local hy_installer="/tmp/hysteria-install.sh"
   curl -fsSL https://get.hy2.sh/ -o "$hy_installer"
   bash "$hy_installer"
   rm -f "$hy_installer"
-  command -v hysteria >/dev/null 2>&1 || fail "hysteria не найдена после установки"
+  command -v hysteria >/dev/null 2>&1 || fail "hysteria was not found after installation"
 }
 
 copy_sources() {
-  info "Копирую исходники проекта в $SRC_DIR..."
+  info "Copying project sources to $SRC_DIR..."
   local current_dir
   current_dir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || pwd)"
-
   rm -rf "$SRC_DIR"
 
   if [[ -f "$current_dir/go.mod" && -d "$current_dir/cmd" ]]; then
@@ -181,7 +182,7 @@ copy_sources() {
 }
 
 build_binary() {
-  info "Собираю бинарник lunahub..."
+  info "Building lunahub binary..."
   cd "$SRC_DIR"
   gofmt -w ./cmd/lunahub/main.go
   go build -o /usr/local/bin/lunahub ./cmd/lunahub
@@ -189,7 +190,7 @@ build_binary() {
 }
 
 write_temporary_caddyfile() {
-  info "Запускаю временный HTTP для получения сертификата..."
+  info "Starting temporary HTTP server for certificate issuance..."
   install -d -m 755 /etc/caddy "$ACME_WEBROOT"
   cat > "$CADDYFILE" <<EOF_CADDY
 :80 {
@@ -203,12 +204,15 @@ EOF_CADDY
 }
 
 obtain_certificate() {
-  info "Получаю Let's Encrypt сертификат для $PANEL_DOMAIN и $VPN_DOMAIN..."
+  info "Obtaining Let's Encrypt certificate for $PANEL_DOMAIN and $VPN_DOMAIN..."
+  local cert_args=(-d "$PANEL_DOMAIN")
+  if [[ "$VPN_DOMAIN" != "$PANEL_DOMAIN" ]]; then
+    cert_args+=(-d "$VPN_DOMAIN")
+  fi
   certbot certonly --webroot \
     -w "$ACME_WEBROOT" \
     --cert-name "$LE_CERT_NAME" \
-    -d "$PANEL_DOMAIN" \
-    -d "$VPN_DOMAIN" \
+    "${cert_args[@]}" \
     --non-interactive \
     --agree-tos \
     --email "$ACME_EMAIL" \
@@ -216,9 +220,9 @@ obtain_certificate() {
 }
 
 copy_certificates() {
-  info "Копирую сертификаты в $TLS_DIR..."
-  [[ -f "$LE_LIVE_DIR/fullchain.pem" ]] || fail "Не найден fullchain: $LE_LIVE_DIR/fullchain.pem"
-  [[ -f "$LE_LIVE_DIR/privkey.pem" ]] || fail "Не найден privkey: $LE_LIVE_DIR/privkey.pem"
+  info "Copying certificates to $TLS_DIR..."
+  [[ -f "$LE_LIVE_DIR/fullchain.pem" ]] || fail "Fullchain was not found: $LE_LIVE_DIR/fullchain.pem"
+  [[ -f "$LE_LIVE_DIR/privkey.pem" ]] || fail "Private key was not found: $LE_LIVE_DIR/privkey.pem"
 
   install -d -m 750 -o root -g root "$CONFIG_DIR" "$TLS_DIR"
   cp -f "$LE_LIVE_DIR/fullchain.pem" "$TLS_FULLCHAIN"
@@ -230,13 +234,13 @@ copy_certificates() {
     chmod 640 "$TLS_FULLCHAIN" "$TLS_PRIVKEY"
   else
     chown root:root "$TLS_FULLCHAIN" "$TLS_PRIVKEY"
-    chmod 600 "$TLS_PRIVKEY"
     chmod 644 "$TLS_FULLCHAIN"
+    chmod 600 "$TLS_PRIVKEY"
   fi
 }
 
 install_cert_deploy_hook() {
-  info "Устанавливаю deploy hook для обновления сертификатов..."
+  info "Installing certificate deploy hook..."
   install -d -m 755 /etc/letsencrypt/renewal-hooks/deploy
   cat > /etc/letsencrypt/renewal-hooks/deploy/lunahub-deploy-certs.sh <<EOF_HOOK
 #!/usr/bin/env bash
@@ -245,12 +249,13 @@ LE_LIVE_DIR="$LE_LIVE_DIR"
 TLS_DIR="$TLS_DIR"
 TLS_FULLCHAIN="$TLS_FULLCHAIN"
 TLS_PRIVKEY="$TLS_PRIVKEY"
+CONFIG_DIR="$CONFIG_DIR"
 install -d -m 750 "\$TLS_DIR"
 cp -f "\$LE_LIVE_DIR/fullchain.pem" "\$TLS_FULLCHAIN"
 cp -f "\$LE_LIVE_DIR/privkey.pem" "\$TLS_PRIVKEY"
 if getent group caddy >/dev/null 2>&1; then
-  chown root:caddy "$CONFIG_DIR" "\$TLS_DIR" "\$TLS_FULLCHAIN" "\$TLS_PRIVKEY"
-  chmod 750 "$CONFIG_DIR" "\$TLS_DIR"
+  chown root:caddy "\$CONFIG_DIR" "\$TLS_DIR" "\$TLS_FULLCHAIN" "\$TLS_PRIVKEY"
+  chmod 750 "\$CONFIG_DIR" "\$TLS_DIR"
   chmod 640 "\$TLS_FULLCHAIN" "\$TLS_PRIVKEY"
 else
   chmod 644 "\$TLS_FULLCHAIN"
@@ -263,9 +268,14 @@ EOF_HOOK
 }
 
 write_final_caddyfile() {
-  info "Настраиваю HTTPS reverse proxy для панели..."
+  info "Configuring HTTPS reverse proxy for the panel..."
+  local http_hosts="http://$PANEL_DOMAIN"
+  if [[ "$VPN_DOMAIN" != "$PANEL_DOMAIN" ]]; then
+    http_hosts="$http_hosts, http://$VPN_DOMAIN"
+  fi
+
   cat > "$CADDYFILE" <<EOF_CADDY
-http://$PANEL_DOMAIN, http://$VPN_DOMAIN {
+$http_hosts {
   root * $ACME_WEBROOT
   file_server
 }
@@ -288,11 +298,11 @@ EOF_CADDY
 
 generate_base_config() {
   if [[ -f "$CONFIG_FILE" ]]; then
-    ok "Config уже существует: $CONFIG_FILE"
+    ok "Config already exists: $CONFIG_FILE"
     return
   fi
 
-  info "Генерирую первичный config.json..."
+  info "Generating initial config.json..."
   local x25519 private_key public_key short_id obfs_password admin_token
   x25519="$(xray x25519)"
 
@@ -309,7 +319,7 @@ generate_base_config() {
 
   if [[ -z "$private_key" || -z "$public_key" ]]; then
     printf '%s\n' "$x25519" >&2
-    fail "Не смог распарсить xray x25519 keys"
+    fail "Could not parse xray x25519 keys"
   fi
 
   short_id="$(openssl rand -hex 8)"
@@ -351,13 +361,13 @@ generate_base_config() {
 }
 EOF_JSON
 
-  jq -e '.panel_domain != "" and .vpn_domain != "" and .public_base_url != "" and .xray.reality_private_key != "" and .xray.reality_public_key != ""' "$CONFIG_FILE" >/dev/null || fail "Сгенерированный config.json некорректен"
+  jq -e '.panel_domain != "" and .vpn_domain != "" and .public_base_url != "" and .xray.reality_private_key != "" and .xray.reality_public_key != ""' "$CONFIG_FILE" >/dev/null || fail "Generated config.json is invalid"
   chown root:root "$CONFIG_FILE"
   chmod 600 "$CONFIG_FILE"
 }
 
 install_systemd() {
-  info "Устанавливаю systemd unit..."
+  info "Installing systemd units..."
   install -m 644 "$SRC_DIR/systemd/lunahub.service" /etc/systemd/system/lunahub.service
 
   install -d -m 755 /etc/systemd/system/xray.service.d
@@ -374,7 +384,7 @@ EOF_XRAY
 }
 
 init_database_and_configs() {
-  info "Инициализирую базу и VPN-конфиги..."
+  info "Initializing database and VPN configs..."
   lunahub init-db
   chown root:root "$DATA_DIR/db.json"
   chmod 600 "$DATA_DIR/db.json"
@@ -382,22 +392,22 @@ init_database_and_configs() {
 }
 
 configure_firewall() {
-  info "Настраиваю UFW..."
+  info "Configuring UFW..."
   ufw allow OpenSSH >/dev/null || true
   ufw allow 22/tcp >/dev/null || true
   ufw allow 80/tcp >/dev/null || true
   ufw allow 443/tcp >/dev/null || true
-  ufw allow 443/udp >/dev/null || true
   ufw allow "$VPN_TCP_PORT/tcp" >/dev/null || true
+  ufw allow "$VPN_UDP_PORT/udp" >/dev/null || true
   ufw --force enable >/dev/null || true
   ok "Firewall rules applied"
 }
 
 start_services() {
-  info "Запускаю сервисы..."
+  info "Starting services..."
   systemctl restart caddy.service
-  systemctl restart xray.service || warn "xray не запустился. Логи: journalctl -u xray -n 100 --no-pager -l"
-  systemctl restart hysteria-server.service || warn "hysteria-server не запустился. Логи: journalctl -u hysteria-server -n 100 --no-pager -l"
+  systemctl restart xray.service || warn "xray did not start. Logs: journalctl -u xray -n 100 --no-pager -l"
+  systemctl restart hysteria-server.service || warn "hysteria-server did not start. Logs: journalctl -u hysteria-server -n 100 --no-pager -l"
   systemctl restart lunahub.service
 }
 
@@ -406,16 +416,16 @@ print_summary() {
   token="$(jq -r '.admin_token' "$CONFIG_FILE")"
 
   echo
-  ok "LunaHub установлен"
+  ok "LunaHub installed"
   echo "Panel: https://$PANEL_DOMAIN/?token=$token"
   echo "Health: https://$PANEL_DOMAIN/health"
   echo "VPN domain: $VPN_DOMAIN"
   echo "VLESS REALITY: $VPN_DOMAIN:$VPN_TCP_PORT/tcp"
-  echo "Hysteria2: $VPN_DOMAIN:443/udp"
+  echo "Hysteria2: $VPN_DOMAIN:$VPN_UDP_PORT/udp"
   echo "Config: $CONFIG_FILE"
   echo "Database: $DATA_DIR/db.json"
   echo
-  echo "Команды:"
+  echo "Commands:"
   echo "  sudo lunahub doctor"
   echo "  sudo lunahub user create --name \"Ivan\" --email ivan@example.com"
   echo "  sudo lunahub apply"

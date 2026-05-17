@@ -1,53 +1,49 @@
 # LunaHub
 
-LunaHub — своя минимальная панель управления VPN-сервером в стиле 3x-ui, но без копирования 3x-ui. Проект ставит Xray-core, Hysteria2, Caddy, Certbot, генерирует конфиги, выдаёт HTTPS subscription-ссылки и даёт управлять пользователями через веб-панель и CLI.
+LunaHub is a minimal self-hosted VPN control panel inspired by the 3x-ui workflow, but implemented as a separate lightweight Go project. It installs Xray-core, Hysteria2, Caddy and Certbot, generates runtime configs, serves HTTPS subscription links and provides user management through both the web panel and CLI.
 
-## Главная схема
+## Recommended layout
 
-Рекомендуется использовать два DNS-имени:
+Use two DNS names that point to the same server IP:
 
 ```text
-panel.example.com  -> IP сервера
-vpn.example.com    -> IP сервера
+panel.example.com  -> server IP
+vpn.example.com    -> server IP
 ```
 
-Панель работает только через HTTPS:
+The panel is served through HTTPS:
 
 ```text
 https://panel.example.com/?token=ADMIN_TOKEN
 ```
 
-VPN использует отдельный домен:
+The VPN profiles use the VPN domain:
 
 ```text
 vpn.example.com
 ```
 
-Порты по умолчанию:
+Default ports:
 
-| Сервис | Назначение | Порт |
+| Service | Purpose | Port |
 |---|---|---:|
-| Caddy | HTTPS панель | `443/tcp` |
+| Caddy | HTTPS panel | `443/tcp` |
 | Caddy/Certbot | ACME HTTP challenge | `80/tcp` |
 | Xray-core | VLESS REALITY | `8443/tcp` |
 | Hysteria2 | UDP VPN | `443/udp` |
-| LunaHub | внутренний HTTP backend | `127.0.0.1:9443` |
+| LunaHub | internal HTTP backend | `127.0.0.1:9443` |
 
-Почему VLESS не на `443/tcp`: этот порт занимает HTTPS-панель через Caddy. Hysteria2 спокойно работает на `443/udp`, потому что UDP и TCP — разные сокеты.
+VLESS is not placed on `443/tcp` by default because HTTPS for the panel uses that TCP port. Hysteria2 can still use `443/udp` because TCP and UDP are separate sockets.
 
-## Установка одной командой
+## One-command installation
 
-Интерактивный запуск. Скрипт сам спросит:
-
-1. домен панели;
-2. домен VPN;
-3. email для Let's Encrypt.
+Interactive installation. The script asks for the panel domain, VPN domain and Let's Encrypt email:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/CodeNoSekal/lunahub/main/install.sh | sudo bash -s
 ```
 
-Без вопросов, через переменные:
+Non-interactive installation:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/CodeNoSekal/lunahub/main/install.sh | sudo env \
@@ -57,57 +53,67 @@ curl -fsSL https://raw.githubusercontent.com/CodeNoSekal/lunahub/main/install.sh
   bash -s
 ```
 
-Если на твоём VPS не работает `bash <(curl ...)`, используй именно `curl ... | sudo bash -s` или скачай файл:
+Optional port overrides:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/CodeNoSekal/lunahub/main/install.sh | sudo env \
+  LUNAHUB_PANEL_DOMAIN=panel.example.com \
+  LUNAHUB_VPN_DOMAIN=vpn.example.com \
+  LUNAHUB_ACME_EMAIL=admin@example.com \
+  LUNAHUB_VPN_TCP_PORT=8443 \
+  LUNAHUB_VPN_UDP_PORT=443 \
+  bash -s
+```
+
+If process substitution is not available on the VPS, download the installer first:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/CodeNoSekal/lunahub/main/install.sh -o /tmp/lunahub-install.sh
 sudo bash /tmp/lunahub-install.sh
 ```
 
-## Полное удаление
+## Full uninstall
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/CodeNoSekal/lunahub/main/scripts/uninstall.sh | sudo LUNAHUB_PURGE_CONFIRM=YES bash -s
 ```
 
-Удаляются LunaHub, Xray, Hysteria2, конфиги, база, сертификат `lunahub`, deploy hook, systemd unit и UFW-правила проекта. SSH-доступ скрипт старается сохранить.
+The uninstall script removes LunaHub, Xray, Hysteria2, configs, database, the `lunahub` certificate, deploy hook, systemd unit and LunaHub firewall rules. It keeps SSH access rules whenever possible.
 
-## Что умеет панель
+## Web panel features
 
-- показывает пользователей;
-- создаёт пользователей;
-- включает и отключает пользователей;
-- удаляет пользователей;
-- меняет ключи пользователя;
-- автоматически применяет конфиги после изменений;
-- показывает и копирует HTTPS subscription-ссылку;
-- показывает и копирует прямые ссылки VLESS REALITY и Hysteria2.
-
-Кнопка «Копировать» есть прямо рядом с subscription URL.
+- list users;
+- create users;
+- enable and disable users;
+- delete users;
+- rotate user credentials;
+- apply generated configs automatically after user changes;
+- show and copy HTTPS subscription URLs;
+- show and copy direct VLESS REALITY and Hysteria2 links.
 
 ## CLI
 
-Проверка:
+Health check:
 
 ```bash
 sudo lunahub doctor
 sudo lunahub status
 ```
 
-Создать пользователя:
+Create a user:
 
 ```bash
 sudo lunahub user create --name "Ivan" --email ivan@example.com
 sudo lunahub apply
 ```
 
-Показать подписку:
+Show a subscription:
 
 ```bash
 sudo lunahub sub show --email ivan@example.com
 ```
 
-Управление пользователями:
+Manage users:
 
 ```bash
 sudo lunahub user list
@@ -118,14 +124,14 @@ sudo lunahub user delete --email ivan@example.com
 sudo lunahub apply
 ```
 
-Сменить admin token панели:
+Rotate the panel admin token:
 
 ```bash
 sudo lunahub token rotate
 sudo systemctl restart lunahub
 ```
 
-## Основные пути
+## Main paths
 
 ```text
 /usr/local/bin/lunahub
@@ -139,7 +145,7 @@ sudo systemctl restart lunahub
 /etc/caddy/Caddyfile
 ```
 
-## Проверка после установки
+## Post-install check
 
 ```bash
 sudo lunahub doctor
@@ -147,7 +153,7 @@ curl -s https://panel.example.com/health
 sudo ss -lntup | grep -E ':(80|443|8443|9443)\b'
 ```
 
-Ожидаемо:
+Expected listeners with default ports:
 
 ```text
 caddy      tcp/80
@@ -157,9 +163,9 @@ hysteria   udp/443
 lunahub    tcp/127.0.0.1:9443
 ```
 
-## Диагностика
+## Diagnostics
 
-Логи:
+Logs:
 
 ```bash
 sudo journalctl -u lunahub -n 100 --no-pager -l
@@ -175,16 +181,16 @@ dig +short A panel.example.com
 dig +short A vpn.example.com
 ```
 
-Проверка сертификата:
+Certificate check:
 
 ```bash
 sudo certbot certificates
 sudo ls -l /etc/lunahub/tls
 ```
 
-## Безопасность
+## Security
 
-Не публикуй содержимое этих файлов:
+Do not publish the contents of these files:
 
 ```text
 /etc/lunahub/config.json
@@ -194,15 +200,15 @@ sudo ls -l /etc/lunahub/tls
 /etc/lunahub/tls/lunahub-privkey.pem
 ```
 
-В них есть admin token, private key, UUID, пароли пользователей, subscription tokens и TLS private key.
+They contain the admin token, private key, UUIDs, user passwords, subscription tokens and TLS private key.
 
-## Разработка
+## Development check
 
 ```bash
 bash scripts/dev-check.sh
 ```
 
-Или отдельно:
+Or run checks separately:
 
 ```bash
 gofmt -w ./cmd/lunahub/main.go

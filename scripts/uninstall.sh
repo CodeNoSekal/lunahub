@@ -11,6 +11,7 @@ if [[ "${LUNAHUB_PURGE_CONFIRM:-}" != "YES" ]]; then
 fi
 
 VPN_TCP_PORT="${LUNAHUB_VPN_TCP_PORT:-8443}"
+VPN_UDP_PORT="${LUNAHUB_VPN_UDP_PORT:-443}"
 
 echo "[1/10] Preserve SSH access in UFW if UFW is active"
 ufw allow OpenSSH >/dev/null 2>&1 || true
@@ -42,7 +43,7 @@ EOF_CADDY
   systemctl reload caddy.service >/dev/null 2>&1 || true
 fi
 
-echo "[5/10] Remove Let's Encrypt LunaHub cert and deploy hook"
+echo "[5/10] Remove Let's Encrypt LunaHub certificate and deploy hook"
 rm -f /etc/letsencrypt/renewal-hooks/deploy/lunahub-deploy-certs.sh
 certbot delete --cert-name lunahub --non-interactive >/dev/null 2>&1 || true
 
@@ -81,8 +82,8 @@ userdel xray >/dev/null 2>&1 || true
 echo "[10/10] Remove UFW rules opened by LunaHub"
 ufw delete allow 80/tcp >/dev/null 2>&1 || true
 ufw delete allow 443/tcp >/dev/null 2>&1 || true
-ufw delete allow 443/udp >/dev/null 2>&1 || true
 ufw delete allow "$VPN_TCP_PORT/tcp" >/dev/null 2>&1 || true
+ufw delete allow "$VPN_UDP_PORT/udp" >/dev/null 2>&1 || true
 
 echo "Purge complete."
 echo "Check leftovers with:"
