@@ -62,10 +62,16 @@ read_tty() {
 }
 
 ask_required() {
-  local var_name="$1" label="$2" current="${!var_name:-}" value
+  local var_name="$1" label="$2" current="" value
+
+  if [[ -v "$var_name" ]]; then
+    current="${!var_name}"
+  fi
+
   if [[ -n "$current" ]]; then
     return
   fi
+
   value="$(read_tty "$label: ")"
   [[ -n "$value" ]] || fail "Missing value: $label. You can pass it through the $var_name environment variable."
   printf -v "$var_name" '%s' "$value"
